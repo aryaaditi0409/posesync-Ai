@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Live Skeleton</title>
+  <style>
+    body { background: #111; color: white; text-align: center; font-family: sans-serif; }
+    .wrap { position: relative; width: 480px; height: 360px; margin: 20px auto; }
+    video, canvas { position: absolute; top: 0; left: 0; width: 480px; height: 360px; transform: scaleX(-1); }
+    #status { margin-top: 400px; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>Live Skeleton Overlay</h1>
+  <div class="wrap">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="overlay" width="480" height="360"></canvas>
+  </div>
+  <p id="status">Loading pose detection model...</p>
+
+  <script type="module">
+    import { PoseLandmarker, FilesetResolver, DrawingUtils }
+    from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+
+    const video = document.getElementById("webcam");
+    const canvas = document.getElementById("overlay");
+    const ctx = canvas.getContext("2d");
+    const status = document.getElementById("status");
+    let poseLandmarker;
+
+    async function setup() {
+      const vision = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+      );
+      poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1
+      });
+      status.innerText = "Model loaded! Starting camera...";
+      startWebcam();
+    }
+
+    function startWebcam() {
+      navigator.mediaDevices.getUserMedia({ video: true }).then((stream) => {
+        video.srcObject = stream;
+        video.addEventListener("loadeddata", predictLoop);
+        status.innerText = "Camera on! Step into frame.";
+      });
+    }
+
+    function predictLoop() {
+      const result = poseLandmarker.detectForVideo(video, performance.now());
+      const drawingUtils = new DrawingUtils(ctx);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (result.landmarks && result.landmarks.length > 0) {
+        drawingUtils.drawLandmarks(result.landmarks[0], { radius: 4, color: "#00FF00" });
+        drawingUtils.drawConnectors(result.landmarks[0], PoseLandmarker.POSE_CONNECTIONS, { color: "#FFFFFF" });
+        status.innerText = "Skeleton detected!";
+      } else {
+        status.innerText = "No person detected — step closer";
+      }
+      requestAnimationFrame(predictLoop);
+    }
+
+    setup();
+  </script>
+</body>
+</html>
