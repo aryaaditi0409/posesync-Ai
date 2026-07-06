@@ -138,9 +138,12 @@
 </div>
 
 <!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-<script>
+<script type="module">
+import {
+    PoseLandmarker,
+    FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/+esm";
+
 const upload = document.getElementById("upload");
 const image = document.getElementById("image");
 const canvas = document.getElementById("canvas");
@@ -194,6 +197,16 @@ const LANDMARK_NAMES = [
 "left_foot_index",
 "right_foot_index"
 ];
+const CONNECTIONS = [
+    [11,13],[13,15],
+    [12,14],[14,16],
+    [11,12],
+    [11,23],[12,24],
+    [23,24],
+    [23,25],[25,27],
+    [24,26],[26,28],
+    [27,31],[28,32]
+];
 
 // ✅ Show success / error messages
 function showStatus(message, type){
@@ -233,19 +246,21 @@ function calculateAngle(A, B, C){
 
     return Number(angle.toFixed(1));
 }
-const pose = new Pose({
-    locateFile: file =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
-});
+const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+);
 
-pose.setOptions({
-    modelComplexity: 1,
-    smoothLandmarks: true,
-    enableSegmentation: false,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-    
-});
+const poseLandmarker = await PoseLandmarker.createFromOptions(
+    vision,
+    {
+        baseOptions: {
+            modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+        },
+        runningMode: "IMAGE",
+        numPoses: 1
+    }
+);
 async function extractPose(imageFile){
 
     return new Promise((resolve, reject)=>{
@@ -255,41 +270,40 @@ async function extractPose(imageFile){
             return;
         }
 
-        currentResolve = resolve;
-
         const reader = new FileReader();
 
-        reader.onload = e=>{
+        reader.onload = async (e)=>{
 
-            image.onload = async ()=>{
+            image.onload = ()=>{
 
-                canvas.width = image.width;
-                canvas.height = image.height;
+    canvas.width = image.width;
+    canvas.height = image.height;
 
-                ctx.drawImage(image,0,0);
+    ctx.drawImage(image,0,0);
 
-                try{
-                    await pose.send({
-                        image:image
-                    });
-                }
-                catch(err){
-                    reject(err);
-                }
+    try {
+        const results = poseLandmarker.detect(image);
 
-            };
+        const extracted = processPoseResults(results);
+
+        resolve(extracted);
+
+    } catch (err) {
+        reject(err);
+    }
+};
+
+            
 
             image.src = e.target.result;
-
         };
 
         reader.onerror = reject;
-
         reader.readAsDataURL(imageFile);
-
     });
-
 }
+
+window.extractPose = extractPose;
 
 window.extractPose = extractPose;
 function processPoseResults(results){
@@ -297,7 +311,7 @@ function processPoseResults(results){
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    if(!results.poseLandmarks){
+    if (!results.landmarks || results.landmarks.length === 0) {
         showStatus("No person detected. Try a different photo.", "error");
 
         jsonOutput.textContent = "No pose detected.";
@@ -311,23 +325,53 @@ function processPoseResults(results){
 
     showStatus("Pose detected successfully! Ready to compare.", "success");
 
-    drawConnectors(
-        ctx,
-        results.poseLandmarks,
-        POSE_CONNECTIONS,
-        { color: "#00FF00", lineWidth: 4 }
-    );
-
-    drawLandmarks(
-        ctx,
-        results.poseLandmarks,
-        { color: "#FF0000", fillColor: "#FFFF00", radius: 5 }
-    );
+    
+    
 
     // ✅ KEYPOINTS
     const poseJSON = {};
 
-    results.poseLandmarks.forEach((lm, i) => {
+   const landmarks = results.landmarks[0];
+   window.referenceLandmarks = results.landmarks?.[0] || null;
+   // Draw green skeleton
+ctx.strokeStyle = "lime";
+ctx.lineWidth = 4;
+
+CONNECTIONS.forEach(([a, b]) => {
+
+    const p1 = landmarks[a];
+    const p2 = landmarks[b];
+
+    ctx.beginPath();
+    ctx.moveTo(
+        p1.x * canvas.width,
+        p1.y * canvas.height
+    );
+
+    ctx.lineTo(
+        p2.x * canvas.width,
+        p2.y * canvas.height
+    );
+
+    ctx.stroke();
+
+});
+
+// Draw red joints
+ctx.fillStyle = "red";
+
+landmarks.forEach(lm => {
+
+    const x = lm.x * canvas.width;
+    const y = lm.y * canvas.height;
+
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+});
+
+landmarks.forEach((lm, i) => {
         poseJSON[LANDMARK_NAMES[i]] = {
             x: Number((lm.x * canvas.width).toFixed(1)),
             y: Number((lm.y * canvas.height).toFixed(1))
@@ -368,16 +412,7 @@ function processPoseResults(results){
 
     return referenceKeypoints;
 }
-pose.onResults(results=>{
 
-    const extracted = processPoseResults(results);
-
-    if(currentResolve){
-        currentResolve(extracted);
-        currentResolve = null;
-    }
-
-});
     
 // -------------------------
 // 📁 IMAGE UPLOAD HANDLER
