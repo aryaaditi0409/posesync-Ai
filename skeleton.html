@@ -54,6 +54,7 @@
 
     function predictLoop() {
       const result = poseLandmarker.detectForVideo(video, performance.now());
+      window.liveLandmarks = result.landmarks?.[0] || null;
       const drawingUtils = new DrawingUtils(ctx);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (result.landmarks && result.landmarks.length > 0) {
